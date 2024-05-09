@@ -16,9 +16,9 @@ group_data = pd.read_csv(resdata,sep=',', header=0, names=names)
 PT = GetPeriodicTable()
 
 
-class Viscosity(object):
+class Molecule(object):
 
-    def __init__(self, inp, T, Pc, debug=False):
+    def __init__(self, inp, debug=False):
         if len(re.findall(r'\b[1-9]{1}[0-9]{1,5}-\d{2}-\d\b',inp)) > 0:
             if debug: print('it\'s a CAS:',inp)
             self.smile = cirpy.resolve(inp,'smiles')
@@ -27,8 +27,7 @@ class Viscosity(object):
             if debug: print('it\'s a smiles:',inp)
             self.smile = inp    
         self.mol= Chem.MolFromSmiles(self.smile)
-        print(self.mol)
-        self.Qs = []
+        self._Qs = []
         self.processed = set()
     
         # here starts the function
@@ -40,9 +39,21 @@ class Viscosity(object):
                 if 'check_' in attribute: getattr(self, attribute)()
         #print (elements)
         #print (matrix)
-        for Q in self.Qs:
-            try: print(group_data[group_data.Q.values==Q][['ai','bi','ci','di']].values[0])
-            except: print('None')
+
+    @property
+    def viscosity(T,Pc): return 0.0
+
+    @property
+    def functional_groups(self):
+        return sorted(self._Qs)
+    @property
+    def parameters(self):
+        parms=[]
+        for Q in sorted(self._Qs):
+            try: p = group_data[group_data.Q.values==Q][['ai','bi','ci','di']].values[0].tolist()
+            except: p = None
+            parms.append((Q,p))
+        return parms
 
     def GetRingSystems(self,includeSpiro=False):
         ri = self.mol.GetRingInfo()
@@ -67,14 +78,14 @@ class Viscosity(object):
         match = list(self.mol.GetSubstructMatches(sub))
         for m in match:
             self.processed = self.processed | set(m)
-            self.Qs.append(42)
+            self._Qs.append(42)
     
     def check_carbonate(self):
         sub = Chem.MolFromSmarts('[O-]C([O-])=O')
         match = list(self.mol.GetSubstructMatches(sub)) 
         for m in match:
             self.processed = self.processed | set(m)
-            self.Qs.append(43)
+            self._Qs.append(43)
 
     # #biphenyl 
     # sub = Chem.MolFromSmarts('c1ccc(cc1)c2ccccc2')
@@ -98,7 +109,7 @@ class Viscosity(object):
             match = list(self.mol.GetSubstructMatches(sub)) 
             for m in match:
                 self.processed = self.processed | set(m)
-                self.Qs.append(17) 
+                self._Qs.append(17) 
     
     #two self.atoms would count as biphenyl, but other atoms in structure should count as e.g. 15/16: need to update logic here 
     
@@ -107,14 +118,14 @@ class Viscosity(object):
         match = list(self.mol.GetSubstructMatches(sub)) 
         for m in match:
             self.processed = self.processed | set(m)
-            self.Qs.append(18) #how many do we add for naphalene? 
+            self._Qs.append(18) #how many do we add for naphalene? 
     
     def check_tetralin(self):
         sub = Chem.MolFromSmarts('C1CCc2ccccc2C1') #this is smile not smarts...
         match = list(self.mol.GetSubstructMatches(sub)) 
         for m in match:
             self.processed = self.processed | set(m)
-            self.Qs.append(20) #how many do we add for tetralin? 
+            self._Qs.append(20) #how many do we add for tetralin? 
     
     def check_aromatic_rings(self):
         sub = Chem.MolFromSmarts("c")
@@ -123,8 +134,8 @@ class Viscosity(object):
             if m in self.processed : continue
             for el in self.elements[m]:
                 indices = np.nonzero(self.matrix[m]==1)[0]
-                if self.elements[indices].size == 2: self.Qs.append(15)
-                elif self.elements[indices].size == 3: self.Qs.append(16) 
+                if self.elements[indices].size == 2: self._Qs.append(15)
+                elif self.elements[indices].size == 3: self._Qs.append(16) 
                 #add some logic to distinguish between bi/terphenyl, naphthalene, turpentine, tetralin
                 #need to know if other carbons in the rings that are not double bonded are classified as this or not 
                 #for turpentine: where does classifcation end? leave as cas n.o not recognised anyway 
@@ -139,11 +150,11 @@ class Viscosity(object):
                     hybridization = str(self.atoms[m].GetHybridization())
                     if hybridization == 'SP3': 
                         indices = np.nonzero(self.matrix[m]==1)[0]
-                        if self.elements[indices].size == 2:   self.Qs.append(11)
-                        elif self.elements[indices].size == 3: self.Qs.append(12)
-                        elif self.elements[indices].size == 4: self.Qs.append(14)
+                        if self.elements[indices].size == 2:   self._Qs.append(11)
+                        elif self.elements[indices].size == 3: self._Qs.append(12)
+                        elif self.elements[indices].size == 4: self._Qs.append(14)
                     if hybridization == 'SP2': 
-                        if self.elements[indices].size == 1:   self.Qs.append(13)
+                        if self.elements[indices].size == 1:   self._Qs.append(13)
             self.processed = self.processed | set(ri)  
     
     def check_unlisted(self):
@@ -154,30 +165,38 @@ class Viscosity(object):
                 hybridization = str(self.atoms[i].GetHybridization())
                 if hybridization == 'SP3': 
                     indices = np.nonzero(self.matrix[i]==1)[0]
-                    if self.elements[indices].size == 0: self.Qs.append(1)
-                    elif self.elements[indices].size == 1: self.Qs.append(2)
-                    elif self.elements[indices].size == 2: self.Qs.append(3)
-                    elif self.elements[indices].size == 3: self.Qs.append(4)
-                    elif self.elements[indices].size == 4: self.Qs.append(5)
+                    if self.elements[indices].size == 0: self._Qs.append(1)
+                    elif self.elements[indices].size == 1: self._Qs.append(2)
+                    elif self.elements[indices].size == 2: self._Qs.append(3)
+                    elif self.elements[indices].size == 3: self._Qs.append(4)
+                    elif self.elements[indices].size == 4: self._Qs.append(5)
                 elif hybridization == 'SP2': 
                     indices = np.nonzero(self.matrix[i]==1)[0]
-                    if self.elements[indices].size == 1: self.Qs.append(6)
-                    elif self.elements[indices].size == 2: self.Qs.append(7)
-                    elif self.elements[indices].size == 3: self.Qs.append(8)    
+                    if self.elements[indices].size == 1: self._Qs.append(6)
+                    elif self.elements[indices].size == 2: self._Qs.append(7)
+                    elif self.elements[indices].size == 3: self._Qs.append(8)    
                 elif hybridization == 'SP': 
                     indices = np.nonzero(self.matrix[i]==1)[0]
-                    if self.elements[indices].size == 1: self.Qs.append(9)
-                    elif self.elements[indices].size == 2: self.Qs.append(10)
+                    if self.elements[indices].size == 1: self._Qs.append(9)
+                    elif self.elements[indices].size == 2: self._Qs.append(10)
             elif el == 'Cl':
                 indices = np.nonzero(self.matrix[i]==2)[0]
                 print (self.elements[indices])
                 print (self.matrix[i])
                 count = np.sum(self.elements[indices]=='Cl')+1
-                if   count == 1 : self.Qs.append(78)
-                elif count == 2 : self.Qs.append(79)
-                elif count == 3 : self.Qs.append(80)
+                if   count == 1 : self._Qs.append(78)
+                elif count == 2 : self._Qs.append(79)
+                elif count == 3 : self._Qs.append(80)
             # TODO processed
 
+    def _tests(self):
+        """
+            >>> from pyviscosity import Molecule
+            >>> M = Molecule('98-08-8') #Benzotrifluoride
+            >>> M.functional_groups
+            [5 15 16 80]
+        """
+        pass
 
 #for lab in labels:
  #   print(group_data[group_data.Group.str == lab])
